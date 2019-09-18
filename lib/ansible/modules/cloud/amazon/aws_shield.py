@@ -52,6 +52,12 @@ EXAMPLES = r'''
     state: present
     resource: 'arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/my-load-balancer'
 
+- name: add AWS Shield protection to an EIP
+  aws_shield:
+    name: "Shield EIP for {{ eip.tags.Name }}"
+    state: present
+    resource: "arn:aws:ec2:{{ ec2_region }}:{{ aws_account_id }}:eip-allocation/{{ eip.allocation_id }}"
+
 - name: remove AWS Shield protection from an ELB
   aws_shield:
     name: 'shield_test'
@@ -85,7 +91,7 @@ def subscription_exists(client, module):
     try:
         response = client.get_subscription_state()
         if response['SubscriptionState'] == 'INACTIVE':
-            module.fail_json_aws(msg="AWS Shield Advanced subscription is not active. Please activate it before using this module.")
+            module.fail_json(msg="AWS Shield Advanced subscription is not active. Please activate it before using this module.")
     except (ClientError, IndexError) as e:
         module.fail_json_aws(e, msg="Couldn't verify AWS Shield Advanced subscription state.")
 
@@ -94,11 +100,20 @@ def shield_exists(client, module, result):
     if module.check_mode and module.params.get('state') == 'absent':
         return True
     try:
-        response = client.list_protections()
-        for i in response['Protections']:
-            if i['Name'] == module.params.get('name'):
-                result['protection_id'] = i['Id']
-                return True
+        params = {}
+        while True:
+            response = client.list_protections(**params)
+
+            for protection in response['Protections']:
+                if protection['Name'] == module.params.get('name'):
+                    result['protection_id'] = protection['Id']
+                    return True
+
+            if 'NextToken' in response:
+                params['NextToken'] = response['NextToken']
+            else:
+                break
+
     except (ClientError, IndexError):
         return False
 
